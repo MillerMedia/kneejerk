@@ -53,8 +53,16 @@ func colorizeMessage(templateID string, outputType string, severity string, jsUR
 }
 
 func urlJoin(baseURL string, relURL string) string {
-	u, _ := url.Parse(baseURL)
-	rel, _ := url.Parse(relURL)
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		// If baseURL parsing fails, return the original baseURL
+		return baseURL
+	}
+	rel, err := url.Parse(relURL)
+	if err != nil {
+		// If relURL parsing fails, return the original baseURL
+		return baseURL
+	}
 	return u.ResolveReference(rel).String()
 }
 
@@ -86,7 +94,11 @@ func printAPI(debug bool, jsURL string, method string, endpoint string) {
 	}
 
 	// Parse the jsURL and endpoint
-	jsURLParsed, _ := url.Parse(jsURL)
+	jsURLParsed, err := url.Parse(jsURL)
+	if err != nil {
+		debugLog(debug, "Debug: Failed to parse jsURL %s: %v\n", jsURL, err)
+		return
+	}
 	endpointParsed, err := url.Parse(endpoint)
 
 	// If endpoint parsed successfully and it's a full URL, check if the base domain matches
@@ -95,14 +107,6 @@ func printAPI(debug bool, jsURL string, method string, endpoint string) {
 			return
 		}
 	}
-	//} else {
-	//	// If it's not a full URL, treat it as a relative path and join with the jsURL
-	//	endpoint = urlJoin(jsURL, endpoint)
-	//	endpointParsed, err = url.Parse(endpoint)
-	//	if err != nil {
-	//		return
-	//	}
-	//}
 
 	severity := determineSeverity(endpoint)
 

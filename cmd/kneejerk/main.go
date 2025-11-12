@@ -7,7 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/PuerkitoBio/goquery"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"regexp"
@@ -29,9 +29,7 @@ const banner = `
 // Pattern for .js files
 var jsFilePattern = regexp.MustCompile(`.*\.js`)
 
-// Regex to find environment variables in both formats
-var axiosFetchPattern = regexp.MustCompile(`(axios\.get\('(.*)'\))|(axios\.post\('(.*)'\,)|(axios\('(.*)'\))|(fetch\('(.*)'\))`)
-var axiosPattern = regexp.MustCompile(`axios\.(get|delete|head|options|post|put|patch)\(\s*["']([^"']+)["']`)
+// Regex to find API path patterns
 var apiPathPattern = regexp.MustCompile(`"(GET|POST|PUT|DELETE|PATCH)",\s*"(/v\d+[^"]*)"`)
 
 var foundVars = map[string]struct{}{}
@@ -40,9 +38,6 @@ var outputFileWriter *bufio.Writer = nil
 
 // Regex to find environment variables directly assigned
 var directEnvVarPattern = regexp.MustCompile(`\b(?:NODE|REACT_APP|AWS)_?[A-Z_]*\b\s*:\s*".*?"`)
-
-// Regex to find environment variables accessed via process.env
-//var processEnvVarPattern = regexp.MustCompile(`process\.env\.[A-Z_][A-Z0-9_]*[^;]*=`)
 
 func scrapeEnvVars(jsURL string, jsContent string) {
 	// First, check for direct assignments
@@ -59,21 +54,6 @@ func scrapeEnvVars(jsURL string, jsContent string) {
 			}
 		}
 	}
-
-	// Then, check for process.env variables
-	//processMatches := processEnvVarPattern.FindAllString(jsContent, -1)
-	//for _, match := range processMatches {
-	//	if _, ok := foundVars[match]; !ok {
-	//		foundVars[match] = struct{}{}
-	//		severity := determineSeverity(match)
-	//		coloredMessage, uncoloredMessage := colorizeMessage("kneejerk", "env-var", severity, jsURL, match)
-	//		fmt.Println(coloredMessage)
-	//		if outputFileWriter != nil {
-	//			_, _ = outputFileWriter.WriteString(uncoloredMessage + "\n")
-	//			_ = outputFileWriter.Flush()
-	//		}
-	//	}
-	//}
 }
 
 // Scrape APIs
@@ -161,7 +141,7 @@ func scrapeJSFiles(u string, debug bool) {
 			}
 			defer jsRes.Body.Close()
 
-			jsContent, err := ioutil.ReadAll(jsRes.Body)
+			jsContent, err := io.ReadAll(jsRes.Body)
 			if err != nil {
 				fmt.Printf("Failed to read %s: %v\n", jsURL, err)
 				return
@@ -189,7 +169,7 @@ func scrapeJSFiles(u string, debug bool) {
 					}
 					defer mapFileRes.Body.Close()
 
-					mapFileContent, err := ioutil.ReadAll(mapFileRes.Body)
+					mapFileContent, err := io.ReadAll(mapFileRes.Body)
 					if err != nil {
 						fmt.Printf("Failed to read %s: %v\n", mapFileUrl, err)
 						return
@@ -221,7 +201,7 @@ func scrapeJSFiles(u string, debug bool) {
 
 func main() {
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	fmt.Println(banner)
+	fmt.Print(banner)
 
 	url := flag.String("u", "", "URL of the website to scan")
 	list := flag.String("l", "", "Path to a file containing a list of URLs to scan")
@@ -255,7 +235,10 @@ func main() {
 			cleanedInput := removeANSI(scanner.Text()) // Remove color codes
 			scrapeJSFiles(cleanedInput, *debug)        // Here you don't need to split the input anymore.
 		}
-	} else if info, _ := os.Stdin.Stat(); info.Mode()&os.ModeCharDevice == 0 {
+		if err := scanner.Err(); err != nil {
+			fmt.Printf("Error reading file %s: %v\n", *list, err)
+		}
+	} else if info, err := os.Stdin.Stat(); err == nil && info.Mode()&os.ModeCharDevice == 0 {
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {
 			fmt.Println(scanner.Text())                // print the input before processing
@@ -270,6 +253,9 @@ func main() {
 			} else {
 				fmt.Println("Invalid input:", cleanedInput)
 			}
+		}
+		if err := scanner.Err(); err != nil {
+			fmt.Printf("Error reading from stdin: %v\n", err)
 		}
 	}
 }
