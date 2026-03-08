@@ -9,21 +9,17 @@ Kneejerk is a pentesting command line tool for scanning environment variables an
 
 ## Installation
 
-Run the following command to install the latest version -
+### Homebrew (macOS/Linux)
+
+```sh
+brew install MillerMedia/tap/kneejerk
+```
+
+### Go Install
 
 ```sh
 go install -v github.com/MillerMedia/kneejerk/cmd/kneejerk@latest
 ```
-
-<details>
-  <summary>Brew</summary>
-
-  ```sh
-  brew tap MillerMedia/kneejerk
-  brew install kneejerk
-  ```
-
-</details>
 
 ## Usage
 
