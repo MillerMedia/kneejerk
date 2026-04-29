@@ -30,6 +30,11 @@ const banner = `
 
 const maxResponseSize = 50 * 1024 * 1024 // cap JS/sourcemap downloads at 50 MB
 
+// Browser-shaped UA so basic WAFs don't reject the default Go-http-client/1.1.
+const defaultUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+var userAgent = defaultUserAgent
+
 // Pattern for .js files (anchored end, allows query string)
 var jsFilePattern = regexp.MustCompile(`\.js(?:\?.*)?$`)
 
@@ -131,7 +136,13 @@ func scrapeAPIPaths(jsURL string, jsContent string, debug bool) {
 }
 
 func fetchBody(targetURL string) ([]byte, error) {
-	res, err := httpClient.Get(targetURL)
+	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+
+	res, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -228,11 +239,13 @@ func main() {
 	output := flag.String("o", "", "Path to output file")
 	debug := flag.Bool("debug", false, "Print debugging statements")
 	insecure := flag.Bool("k", false, "Skip TLS certificate verification (insecure)")
+	ua := flag.String("ua", defaultUserAgent, "User-Agent header to send")
 	flag.Parse()
 
 	if *insecure {
 		httpClient.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 	}
+	userAgent = *ua
 
 	if *output != "" {
 		file, err := os.Create(*output)
