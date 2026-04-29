@@ -35,8 +35,19 @@ const defaultUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KH
 
 var userAgent = defaultUserAgent
 
-// Pattern for .js files (anchored end, allows query string)
-var jsFilePattern = regexp.MustCompile(`\.js(?:\?.*)?$`)
+// Pattern for JS bundle files. Anchored at the end and allowing a query string,
+// matches both classic .js and ES-module .mjs extensions.
+var jsFilePattern = regexp.MustCompile(`\.m?js(?:\?.*)?$`)
+
+// Path fragments that mark a JS bundle as belonging to the host application
+// rather than a third-party widget. Covers React/CRA, Next.js, Vite/Remix,
+// and SvelteKit out of the box.
+var bundlePathPrefixes = []string{
+	"/static/",
+	"/_next/static/",
+	"/assets/",
+	"/_app/immutable/",
+}
 
 // Regex to find API path patterns of the form "METHOD", "/path"
 var apiPathPattern = regexp.MustCompile(`"(GET|POST|PUT|DELETE|PATCH)",\s*"(/[^"]+)"`)
@@ -174,7 +185,7 @@ func scrapeJSFiles(u string, debug bool) {
 
 	doc.Find("script").Each(func(i int, s *goquery.Selection) {
 		src, _ := s.Attr("src")
-		if src == "" || !strings.Contains(src, "/static/") || !jsFilePattern.MatchString(src) {
+		if src == "" || !jsFilePattern.MatchString(src) || !hasBundlePathPrefix(src) {
 			return
 		}
 
