@@ -177,6 +177,13 @@ func scrapeJSFiles(u string, debug bool) {
 			return
 		}
 
+		// SPAs commonly return index.html for missing .map URLs, so skip
+		// any response that isn't a JSON object before attempting to parse.
+		if trimmed := bytes.TrimSpace(mapFileContent); len(trimmed) == 0 || trimmed[0] != '{' {
+			debugLog(debug, "Debug: Skipping non-JSON source map response: %s\n", mapFileUrl)
+			return
+		}
+
 		var sourceMap struct {
 			SourcesContent []string `json:"sourcesContent"`
 		}
