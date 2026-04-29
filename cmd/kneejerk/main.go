@@ -35,6 +35,10 @@ const defaultUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KH
 
 var userAgent = defaultUserAgent
 
+// Optional Cookie header value, e.g. a cf_clearance grabbed from a real browser
+// after solving a Cloudflare challenge.
+var cookieHeader string
+
 // Pattern for JS bundle files. Anchored at the end and allowing a query string,
 // matches both classic .js and ES-module .mjs extensions.
 var jsFilePattern = regexp.MustCompile(`\.m?js(?:\?.*)?$`)
@@ -152,6 +156,9 @@ func fetchBody(targetURL string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", userAgent)
+	if cookieHeader != "" {
+		req.Header.Set("Cookie", cookieHeader)
+	}
 
 	res, err := httpClient.Do(req)
 	if err != nil {
@@ -251,12 +258,14 @@ func main() {
 	debug := flag.Bool("debug", false, "Print debugging statements")
 	insecure := flag.Bool("k", false, "Skip TLS certificate verification (insecure)")
 	ua := flag.String("ua", defaultUserAgent, "User-Agent header to send")
+	cookie := flag.String("cookie", "", "Cookie header value to send (e.g. cf_clearance=... from a browser session)")
 	flag.Parse()
 
 	if *insecure {
 		httpClient.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 	}
 	userAgent = *ua
+	cookieHeader = *cookie
 
 	if *output != "" {
 		file, err := os.Create(*output)
