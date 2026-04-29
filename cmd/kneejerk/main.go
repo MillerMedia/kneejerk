@@ -65,8 +65,11 @@ var outputFileWriter *bufio.Writer = nil
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
-// Regex to find environment variables directly assigned
-var directEnvVarPattern = regexp.MustCompile(`\b(?:NODE|REACT_APP|AWS)_?[A-Z_]*\b\s*:\s*".*?"`)
+// Regex to find environment variables directly assigned. Covers the standard
+// build-time prefixes for the major JS frameworks: Node, CRA (REACT_APP_),
+// Next.js (NEXT_PUBLIC_), Vite (VITE_), Expo (EXPO_PUBLIC_), plus AWS-prefixed
+// vars that frequently leak into bundles.
+var directEnvVarPattern = regexp.MustCompile(`\b(?:NODE|REACT_APP|NEXT_PUBLIC|EXPO_PUBLIC|VITE|AWS)_?[A-Z_]*\b\s*:\s*".*?"`)
 
 func scrapeEnvVars(jsURL string, jsContent string) {
 	// First, check for direct assignments
