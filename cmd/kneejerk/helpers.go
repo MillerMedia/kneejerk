@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/logrusorgru/aurora"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -21,17 +22,35 @@ func removeANSI(input string) string {
 	return ansiEscape.ReplaceAllString(input, "")
 }
 
-func determineSeverity(envVar string) string {
-	envVar = strings.ToUpper(envVar) // Ensure case-insensitive comparison
-	if strings.Contains(envVar, "AWS") && (strings.Contains(envVar, "ACCESS") && (strings.Contains(envVar, "ID") || strings.Contains(envVar, "KEY"))) || strings.Contains(envVar, "SECRET") {
-		return "high"
-	} else if strings.Contains(envVar, "AWS") {
-		return "medium"
-	} else if strings.Contains(envVar, "API") && (strings.Contains(envVar, "URL") || strings.Contains(envVar, "HOST") || strings.Contains(envVar, "ROOT")) {
-		return "low"
-	} else {
-		return "info"
+func writeOutput(s string) {
+	if outputFileWriter == nil {
+		return
 	}
+	if _, err := outputFileWriter.WriteString(s + "\n"); err != nil {
+		fmt.Fprintf(os.Stderr, "kneejerk: output write failed: %v\n", err)
+		return
+	}
+	if err := outputFileWriter.Flush(); err != nil {
+		fmt.Fprintf(os.Stderr, "kneejerk: output flush failed: %v\n", err)
+	}
+}
+
+func determineSeverity(envVar string) string {
+	upper := strings.ToUpper(envVar)
+	awsAccessKey := strings.Contains(upper, "AWS") &&
+		strings.Contains(upper, "ACCESS") &&
+		(strings.Contains(upper, "ID") || strings.Contains(upper, "KEY"))
+	if awsAccessKey || strings.Contains(upper, "SECRET") {
+		return "high"
+	}
+	if strings.Contains(upper, "AWS") {
+		return "medium"
+	}
+	if strings.Contains(upper, "API") &&
+		(strings.Contains(upper, "URL") || strings.Contains(upper, "HOST") || strings.Contains(upper, "ROOT")) {
+		return "low"
+	}
+	return "info"
 }
 
 func colorizeMessage(templateID string, outputType string, severity string, jsURL string, match string) (string, string) {
@@ -112,10 +131,7 @@ func printAPI(debug bool, jsURL string, method string, endpoint string) {
 
 	coloredMessage, uncoloredMessage := colorizeMessage("kneejerk", "api", severity, jsURL, fmt.Sprintf(`"%s", "%s"`, method, endpoint))
 	fmt.Println(coloredMessage)
-	if outputFileWriter != nil {
-		_, _ = outputFileWriter.WriteString(uncoloredMessage + "\n")
-		_ = outputFileWriter.Flush()
-	}
+	writeOutput(uncoloredMessage)
 }
 
 // This function takes a hostname and returns its base domain.

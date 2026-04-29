@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"flag"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // ASCII Banner
@@ -26,15 +28,22 @@ const banner = `
                                v0.2
 `
 
-// Pattern for .js files
-var jsFilePattern = regexp.MustCompile(`.*\.js`)
+const maxResponseSize = 50 * 1024 * 1024 // cap JS/sourcemap downloads at 50 MB
+
+// Pattern for .js files (anchored end, allows query string)
+var jsFilePattern = regexp.MustCompile(`\.js(?:\?.*)?$`)
 
 // Regex to find API path patterns
 var apiPathPattern = regexp.MustCompile(`"(GET|POST|PUT|DELETE|PATCH)",\s*"(/v\d+[^"]*)"`)
 
+// Regex to find //# sourceMappingURL= or //@ sourceMappingURL= comments
+var sourceMapURLPattern = regexp.MustCompile(`(?m)^//[#@]\s*sourceMappingURL=([^\s]+)\s*$`)
+
 var foundVars = map[string]struct{}{}
 
 var outputFileWriter *bufio.Writer = nil
+
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 // Regex to find environment variables directly assigned
 var directEnvVarPattern = regexp.MustCompile(`\b(?:NODE|REACT_APP|AWS)_?[A-Z_]*\b\s*:\s*".*?"`)
@@ -48,10 +57,7 @@ func scrapeEnvVars(jsURL string, jsContent string) {
 			severity := determineSeverity(match)
 			coloredMessage, uncoloredMessage := colorizeMessage("kneejerk", "env-var", severity, jsURL, match)
 			fmt.Println(coloredMessage)
-			if outputFileWriter != nil {
-				_, _ = outputFileWriter.WriteString(uncoloredMessage + "\n")
-				_ = outputFileWriter.Flush()
-			}
+			writeOutput(uncoloredMessage)
 		}
 	}
 }
@@ -92,7 +98,7 @@ func scrapeAPIPaths(jsURL string, jsContent string, debug bool) {
 	allMatches = append(allMatches, ajaxMatches...)
 
 	for _, match := range allMatches {
-		if len(match) > 1 {
+		if len(match) > 2 {
 			method := strings.ToUpper(match[2]) // Convert the method to uppercase
 			endpoint := strings.ReplaceAll(match[1], `${}`, "")
 			debugLog(debug, "Debug: Found AJAX endpoint: [%s, %s]\n", method, endpoint)
@@ -104,18 +110,30 @@ func scrapeAPIPaths(jsURL string, jsContent string, debug bool) {
 	}
 }
 
+func fetchBody(targetURL string) ([]byte, error) {
+	res, err := httpClient.Get(targetURL)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, fmt.Errorf("status %d", res.StatusCode)
+	}
+
+	return io.ReadAll(io.LimitReader(res.Body, maxResponseSize))
+}
+
 func scrapeJSFiles(u string, debug bool) {
-	// Remove ANSI escape sequences from the URL
 	cleanUrl := removeANSI(u)
 
-	res, err := http.Get(cleanUrl)
+	body, err := fetchBody(cleanUrl)
 	if err != nil {
 		fmt.Printf("Failed to get %s: %v\n", u, err)
 		return
 	}
-	defer res.Body.Close()
 
-	doc, err := goquery.NewDocumentFromReader(res.Body)
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
 	if err != nil {
 		fmt.Printf("Failed to parse %s: %v\n", u, err)
 		return
@@ -125,89 +143,69 @@ func scrapeJSFiles(u string, debug bool) {
 
 	doc.Find("script").Each(func(i int, s *goquery.Selection) {
 		src, _ := s.Attr("src")
-		if src != "" && strings.Contains(src, "/static/") && jsFilePattern.MatchString(src) {
-			jsURL := urlJoin(u, src)
+		if src == "" || !strings.Contains(src, "/static/") || !jsFilePattern.MatchString(src) {
+			return
+		}
 
-			// Skip if this JS file has been processed
-			if processedJs[jsURL] {
-				return
-			}
-			processedJs[jsURL] = true
+		jsURL := urlJoin(u, src)
+		if processedJs[jsURL] {
+			return
+		}
+		processedJs[jsURL] = true
 
-			jsRes, err := http.Get(jsURL)
-			if err != nil {
-				fmt.Printf("Failed to get %s: %v\n", jsURL, err)
-				return
-			}
-			defer jsRes.Body.Close()
+		jsContent, err := fetchBody(jsURL)
+		if err != nil {
+			fmt.Printf("Failed to get %s: %v\n", jsURL, err)
+			return
+		}
 
-			jsContent, err := io.ReadAll(jsRes.Body)
-			if err != nil {
-				fmt.Printf("Failed to read %s: %v\n", jsURL, err)
-				return
-			}
+		cleanJsContent := removeANSI(string(jsContent))
+		scrapeEnvVars(jsURL, cleanJsContent)
+		scrapeAPIPaths(jsURL, cleanJsContent, debug)
 
-			// Remove ANSI escape sequences
-			cleanJsContent := removeANSI(string(jsContent))
+		mapMatch := sourceMapURLPattern.FindStringSubmatch(cleanJsContent)
+		if mapMatch == nil {
+			return
+		}
 
-			// Call the specific scraping functions
-			scrapeEnvVars(jsURL, cleanJsContent)
-			scrapeAPIPaths(jsURL, cleanJsContent, debug)
+		mapFileUrl := urlJoin(jsURL, mapMatch[1])
+		debugLog(debug, "Debug: Fetching source map: %s\n", mapFileUrl)
 
-			// Check for sourceMappingURL
-			if strings.HasSuffix(cleanJsContent, ".map") {
-				lines := strings.Split(cleanJsContent, "\n")
-				lastLine := lines[len(lines)-1]
-				if strings.HasPrefix(lastLine, "//# sourceMappingURL=") {
-					mapFileName := strings.TrimPrefix(lastLine, "//# sourceMappingURL=")
-					mapFileUrl := urlJoin(jsURL, mapFileName)
-					debugLog(debug, "Debug: Fetching source map: %s\n", mapFileUrl)
-					mapFileRes, err := http.Get(mapFileUrl)
-					if err != nil {
-						fmt.Printf("Failed to get %s: %v\n", mapFileUrl, err)
-						return
-					}
-					defer mapFileRes.Body.Close()
+		mapFileContent, err := fetchBody(mapFileUrl)
+		if err != nil {
+			fmt.Printf("Failed to get %s: %v\n", mapFileUrl, err)
+			return
+		}
 
-					mapFileContent, err := io.ReadAll(mapFileRes.Body)
-					if err != nil {
-						fmt.Printf("Failed to read %s: %v\n", mapFileUrl, err)
-						return
-					}
+		var sourceMap struct {
+			SourcesContent []string `json:"sourcesContent"`
+		}
+		if err := json.Unmarshal(mapFileContent, &sourceMap); err != nil {
+			fmt.Printf("Failed to parse source map %s: %v\n", mapFileUrl, err)
+			return
+		}
 
-					var sourceMap struct {
-						SourcesContent []string `json:"sourcesContent"`
-					}
-
-					err = json.Unmarshal(mapFileContent, &sourceMap)
-					if err != nil {
-						fmt.Printf("Failed to parse source map %s: %v\n", mapFileUrl, err)
-						return
-					}
-
-					for _, sourceContent := range sourceMap.SourcesContent {
-						// Remove ANSI escape sequences
-						cleanSourceContent := removeANSI(sourceContent)
-
-						// Call the specific scraping functions
-						scrapeEnvVars(mapFileUrl, cleanSourceContent)
-						scrapeAPIPaths(mapFileUrl, cleanSourceContent, debug)
-					}
-				}
-			}
+		for _, sourceContent := range sourceMap.SourcesContent {
+			cleanSourceContent := removeANSI(sourceContent)
+			scrapeEnvVars(mapFileUrl, cleanSourceContent)
+			scrapeAPIPaths(mapFileUrl, cleanSourceContent, debug)
 		}
 	})
 }
 
 func main() {
-	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	fmt.Print(banner)
 
 	url := flag.String("u", "", "URL of the website to scan")
 	list := flag.String("l", "", "Path to a file containing a list of URLs to scan")
 	output := flag.String("o", "", "Path to output file")
 	debug := flag.Bool("debug", false, "Print debugging statements")
+	insecure := flag.Bool("k", false, "Skip TLS certificate verification (insecure)")
 	flag.Parse()
+
+	if *insecure {
+		httpClient.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	}
 
 	if *output != "" {
 		file, err := os.Create(*output)
@@ -243,10 +241,7 @@ func main() {
 		for scanner.Scan() {
 			fmt.Println(scanner.Text())                // print the input before processing
 			cleanedInput := removeANSI(scanner.Text()) // Remove color codes
-			if outputFileWriter != nil {
-				_, _ = outputFileWriter.WriteString(cleanedInput + "\n")
-				_ = outputFileWriter.Flush()
-			}
+			writeOutput(cleanedInput)
 			urlParts := strings.Split(cleanedInput, " ")
 			if len(urlParts) > 3 {
 				scrapeJSFiles(urlParts[3], *debug)
