@@ -33,8 +33,8 @@ const maxResponseSize = 50 * 1024 * 1024 // cap JS/sourcemap downloads at 50 MB
 // Pattern for .js files (anchored end, allows query string)
 var jsFilePattern = regexp.MustCompile(`\.js(?:\?.*)?$`)
 
-// Regex to find API path patterns
-var apiPathPattern = regexp.MustCompile(`"(GET|POST|PUT|DELETE|PATCH)",\s*"(/v\d+[^"]*)"`)
+// Regex to find API path patterns of the form "METHOD", "/path"
+var apiPathPattern = regexp.MustCompile(`"(GET|POST|PUT|DELETE|PATCH)",\s*"(/[^"]+)"`)
 
 // Regex to find //# sourceMappingURL= or //@ sourceMappingURL= comments
 var sourceMapURLPattern = regexp.MustCompile(`(?m)^//[#@]\s*sourceMappingURL=([^\s]+)\s*$`)
@@ -76,13 +76,15 @@ func scrapeAPIPaths(jsURL string, jsContent string, debug bool) {
 		}
 	}
 
-	axiosPathRE := regexp.MustCompile(`axios\.(get|post|put|delete|patch)\(\s*['"]([^'"]+)['"]`)
-	fetchPathRE := regexp.MustCompile(`fetch\(\s*['"]([^'"]+)['"],[\s\S]*?{[\s\S]*?method\s*:\s*['"]([^'"]+)['"]`)
-	ajaxPathRE := regexp.MustCompile(`\$\.ajax\(\s*{\s*url\s*:\s*['"]([^'"]+)['"],[\s\S]*?type\s*:\s*['"]([^'"]+)['"]`)
+	// All URL-quoting variants below accept ', ", and ` (template literal) delimiters.
+	axiosPathRE := regexp.MustCompile("axios\\.(get|post|put|delete|patch)\\(\\s*[\"'`]([^\"'`]+)[\"'`]")
+	fetchPathRE := regexp.MustCompile("fetch\\(\\s*[\"'`]([^\"'`]+)[\"'`],[\\s\\S]*?\\{[\\s\\S]*?method\\s*:\\s*[\"'`]([^\"'`]+)[\"'`]")
+	fetchBareRE := regexp.MustCompile("fetch\\(\\s*[\"'`]([^\"'`]+)[\"'`]\\s*\\)")
+	ajaxPathRE := regexp.MustCompile("\\$\\.ajax\\(\\s*\\{\\s*url\\s*:\\s*[\"'`]([^\"'`]+)[\"'`],[\\s\\S]*?type\\s*:\\s*[\"'`]([^\"'`]+)[\"'`]")
+	xhrPathRE := regexp.MustCompile("\\.open\\s*\\(\\s*[\"'`](GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)[\"'`]\\s*,\\s*[\"'`]([^\"'`]+)[\"'`]")
 
 	axiosMatches := axiosPathRE.FindAllStringSubmatch(jsContent, -1)
-
-	// Swap method and endpoint in axiosMatches
+	// Reorder axios captures to [_, URL, METHOD]
 	for i, match := range axiosMatches {
 		if len(match) > 2 {
 			axiosMatches[i] = []string{match[0], match[2], match[1]}
@@ -92,10 +94,28 @@ func scrapeAPIPaths(jsURL string, jsContent string, debug bool) {
 	fetchMatches := fetchPathRE.FindAllStringSubmatch(jsContent, -1)
 	ajaxMatches := ajaxPathRE.FindAllStringSubmatch(jsContent, -1)
 
+	xhrMatches := xhrPathRE.FindAllStringSubmatch(jsContent, -1)
+	// Reorder xhr captures to [_, URL, METHOD]
+	for i, match := range xhrMatches {
+		if len(match) > 2 {
+			xhrMatches[i] = []string{match[0], match[2], match[1]}
+		}
+	}
+
+	// Bare fetch defaults to GET; pad to [_, URL, METHOD]
+	fetchBareMatches := fetchBareRE.FindAllStringSubmatch(jsContent, -1)
+	for i, match := range fetchBareMatches {
+		if len(match) > 1 {
+			fetchBareMatches[i] = []string{match[0], match[1], "GET"}
+		}
+	}
+
 	var allMatches [][]string
 	allMatches = append(allMatches, axiosMatches...)
 	allMatches = append(allMatches, fetchMatches...)
 	allMatches = append(allMatches, ajaxMatches...)
+	allMatches = append(allMatches, xhrMatches...)
+	allMatches = append(allMatches, fetchBareMatches...)
 
 	for _, match := range allMatches {
 		if len(match) > 2 {
