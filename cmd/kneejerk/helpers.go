@@ -11,6 +11,23 @@ import (
 
 var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
+// Template-literal placeholders like ${encodeURIComponent(e)} are stripped
+// before the parens check in looksLikeURL so legitimate templated URLs
+// aren't mistaken for in-the-middle-of-an-expression false positives.
+var templatePlaceholder = regexp.MustCompile(`\$\{[^}]*\}`)
+
+// looksLikeURL filters out captured "endpoints" that are clearly not URLs —
+// most commonly regex misfires that grab a fragment of minified JS like
+// ".concat(JSON.stringify(e),". Real URL paths don't contain bare parens
+// once template-literal interpolations are stripped.
+func looksLikeURL(s string) bool {
+	if s == "" {
+		return false
+	}
+	stripped := templatePlaceholder.ReplaceAllString(s, "")
+	return !strings.ContainsAny(stripped, "()")
+}
+
 // Helper Functions
 func debugLog(debug bool, format string, v ...interface{}) {
 	if debug {

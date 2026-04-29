@@ -94,6 +94,9 @@ func scrapeAPIPaths(jsURL string, jsContent string, debug bool) {
 	matches := apiPathPattern.FindAllStringSubmatch(jsContent, -1)
 	for _, match := range matches {
 		debugLog(debug, "Debug: Found API path match: %s\n", match)
+		if !looksLikeURL(match[2]) {
+			continue
+		}
 		if _, ok := foundVars[match[0]]; !ok {
 			foundVars[match[0]] = struct{}{}
 			printAPI(debug, jsURL, match[1], match[2])
@@ -146,6 +149,9 @@ func scrapeAPIPaths(jsURL string, jsContent string, debug bool) {
 			method := strings.ToUpper(match[2]) // Convert the method to uppercase
 			endpoint := strings.ReplaceAll(match[1], `${}`, "")
 			debugLog(debug, "Debug: Found AJAX endpoint: [%s, %s]\n", method, endpoint)
+			if !looksLikeURL(endpoint) {
+				continue
+			}
 			if _, ok := foundVars[endpoint]; !ok {
 				foundVars[endpoint] = struct{}{}
 				printAPI(debug, jsURL, method, endpoint)
