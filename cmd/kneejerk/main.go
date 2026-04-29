@@ -45,12 +45,13 @@ var jsFilePattern = regexp.MustCompile(`\.m?js(?:\?.*)?$`)
 
 // Path fragments that mark a JS bundle as belonging to the host application
 // rather than a third-party widget. Covers React/CRA, Next.js, Vite/Remix,
-// and SvelteKit out of the box.
+// SvelteKit, and Astro out of the box.
 var bundlePathPrefixes = []string{
 	"/static/",
 	"/_next/static/",
 	"/assets/",
 	"/_app/immutable/",
+	"/_astro/",
 }
 
 // Regex to find API path patterns of the form "METHOD", "/path"
