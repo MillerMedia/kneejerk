@@ -22,6 +22,15 @@ func removeANSI(input string) string {
 	return ansiEscape.ReplaceAllString(input, "")
 }
 
+func hasBundlePathPrefix(src string) bool {
+	for _, p := range bundlePathPrefixes {
+		if strings.Contains(src, p) {
+			return true
+		}
+	}
+	return false
+}
+
 func writeOutput(s string) {
 	if outputFileWriter == nil {
 		return
