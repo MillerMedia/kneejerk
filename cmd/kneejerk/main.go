@@ -35,8 +35,9 @@ const defaultUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KH
 
 var userAgent = defaultUserAgent
 
-// Pattern for .js files (anchored end, allows query string)
-var jsFilePattern = regexp.MustCompile(`\.js(?:\?.*)?$`)
+// Pattern for JS bundle files. Anchored at the end and allowing a query string,
+// matches both classic .js and ES-module .mjs extensions.
+var jsFilePattern = regexp.MustCompile(`\.m?js(?:\?.*)?$`)
 
 // Path fragments that mark a JS bundle as belonging to the host application
 // rather than a third-party widget. Covers React/CRA, Next.js, Vite/Remix,
